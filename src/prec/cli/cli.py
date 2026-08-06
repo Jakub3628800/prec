@@ -5,6 +5,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from prec.cli.hooks import configure_parser as configure_hook_parser
+from prec.cli.hooks import install, uninstall
 from prec.cli.list import configure_parser as configure_list_parser
 from prec.cli.list import list_checks
 from prec.cli.run import configure_parser as configure_run_parser
@@ -24,6 +26,12 @@ def _parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser("list", help="list configured checks")
     configure_list_parser(list_parser)
+
+    install_parser = subparsers.add_parser("install", help="install a Git hook")
+    configure_hook_parser(install_parser)
+
+    uninstall_parser = subparsers.add_parser("uninstall", help="uninstall a Git hook")
+    configure_hook_parser(uninstall_parser)
     return parser
 
 
@@ -31,7 +39,7 @@ def _normalize_argv(arguments: Sequence[str]) -> list[str]:
     argv = list(arguments)
     if not argv:
         return ["run"]
-    if argv[0] in {"run", "list", "-h", "--help", "--version"}:
+    if argv[0] in {"run", "list", "install", "uninstall", "-h", "--help", "--version"}:
         return argv
     if argv[0].startswith("-"):
         return ["run", *argv]
@@ -49,6 +57,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return run(repository, args)
         if args.command == "list":
             return list_checks(repository, args)
+        if args.command == "install":
+            return install(repository, args)
+        if args.command == "uninstall":
+            return uninstall(repository, args)
         parser.error(f"unknown command: {args.command}")
     except KeyboardInterrupt:
         return 130

@@ -13,5 +13,9 @@ class RepositoryError(PrecError):
     """Git repository inspection failed."""
 
 
+class HookError(PrecError):
+    """A Git hook could not be installed or uninstalled safely."""
+
+
 class UsageError(PrecError):
     """A CLI selection is invalid."""
