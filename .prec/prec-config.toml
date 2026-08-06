@@ -1,0 +1,22 @@
+version = 1
+
+[[checks]]
+id = "ruff"
+run = ["uv", "run", "ruff", "check", "--"]
+files = ["*.py"]
+
+[[checks]]
+id = "format"
+run = ["uv", "run", "ruff", "format", "--check", "--"]
+files = ["*.py"]
+
+[[checks]]
+id = "mypy"
+run = ["uv", "run", "mypy", "--"]
+files = ["*.py"]
+
+[[checks]]
+id = "tests"
+run = ["uv", "run", "pytest", "-q"]
+files = ["*.py", "pyproject.toml"]
+pass_filenames = false
