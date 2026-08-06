@@ -94,17 +94,14 @@ prec run --all               # all tracked and non-ignored files
 prec run ruff mypy           # selected checks, in configuration order
 prec list                    # list check IDs
 prec install                 # install the pre-commit hook
-prec install -t pre-push     # install the pre-push hook
 prec uninstall               # uninstall the pre-commit hook
-prec uninstall -t pre-push   # uninstall the pre-push hook
 ```
 
 ### Git hooks
 
-`install` and `uninstall` accept only `pre-commit` (the default) and `pre-push` through
-`-t` / `--hook-type`. The pre-commit hook checks the exact staged contents; the pre-push hook
-checks all tracked and unignored files. Re-running `install` updates a hook managed by `prec`.
-To avoid losing custom hooks, `prec` refuses to replace or remove a hook it did not install.
+`install` and `uninstall` manage the pre-commit hook. It checks the exact staged contents.
+Re-running `install` updates a hook managed by `prec`. To avoid losing custom hooks, `prec`
+refuses to replace or remove a hook it did not install.
 
 ### File sources
 

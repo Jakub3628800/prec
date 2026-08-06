@@ -21,21 +21,12 @@ def test_install_and_uninstall_pre_commit_by_default(repo: Path) -> None:
     assert not hook.exists()
 
 
-def test_pre_push_is_the_only_alternative_hook_type(repo: Path) -> None:
-    installed = run_prec(repo, "install", "--hook-type", "pre-push")
-    hook = repo / ".git/hooks/pre-push"
+def test_other_hook_types_are_not_supported(repo: Path) -> None:
+    result = run_prec(repo, "install", "--hook-type", "pre-push")
 
-    assert installed.returncode == 0, installed.stderr
-    assert "-m prec run --all" in hook.read_text()
-    assert not (repo / ".git/hooks/pre-commit").exists()
-
-    invalid = run_prec(repo, "install", "--hook-type", "commit-msg")
-    assert invalid.returncode == 2
-    assert "invalid choice" in invalid.stderr
-
-    uninstalled = run_prec(repo, "uninstall", "-t", "pre-push")
-    assert uninstalled.returncode == 0, uninstalled.stderr
-    assert not hook.exists()
+    assert result.returncode == 2
+    assert "unrecognized arguments" in result.stderr
+    assert not (repo / ".git/hooks/pre-push").exists()
 
 
 def test_install_honors_core_hooks_path(repo: Path) -> None:

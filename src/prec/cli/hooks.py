@@ -10,28 +10,16 @@ from pathlib import Path
 from prec.errors.errors import HookError, RepositoryError
 from prec.git.repository import Repository
 
-HOOK_TYPES = ("pre-commit", "pre-push")
 _MARKER = b"# prec-managed-hook\n"
-_HOOK_ARGUMENTS = {
-    "pre-commit": ("run", "--staged"),
-    "pre-push": ("run", "--all"),
-}
 
 
 def configure_parser(parser: argparse.ArgumentParser) -> None:
     """Configure arguments accepted by the hook management commands."""
-    parser.add_argument(
-        "-t",
-        "--hook-type",
-        choices=HOOK_TYPES,
-        default="pre-commit",
-        help="Git hook to manage (default: pre-commit)",
-    )
 
 
-def _hook_path(repository: Repository, hook_type: str) -> Path:
+def _hook_path(repository: Repository) -> Path:
     raw_path = repository.git(
-        ["rev-parse", "--path-format=absolute", "--git-path", f"hooks/{hook_type}"]
+        ["rev-parse", "--path-format=absolute", "--git-path", "hooks/pre-commit"]
     )
     if raw_path.endswith(b"\n"):
         raw_path = raw_path[:-1]
@@ -41,8 +29,8 @@ def _hook_path(repository: Repository, hook_type: str) -> Path:
         raise RepositoryError("Git hook path is not valid UTF-8") from error
 
 
-def _script(hook_type: str) -> bytes:
-    arguments = " ".join(shlex.quote(item) for item in _HOOK_ARGUMENTS[hook_type])
+def _script() -> bytes:
+    arguments = "run --staged"
     python = shlex.quote(sys.executable)
     return (
         "#!/bin/sh\n"
@@ -74,9 +62,9 @@ def _read_existing(path: Path) -> bytes | None:
 
 
 def install(repository: Repository, args: argparse.Namespace) -> int:
-    """Install the requested Git hook."""
-    hook_type: str = args.hook_type
-    path = _hook_path(repository, hook_type)
+    """Install the pre-commit hook."""
+    del args
+    path = _hook_path(repository)
     existing = _read_existing(path)
     if existing is not None and _MARKER not in existing:
         raise HookError(f"Git hook already exists and is not managed by prec: {path}")
@@ -87,7 +75,7 @@ def install(repository: Repository, args: argparse.Namespace) -> int:
         descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.prec-", dir=path.parent)
         temporary = Path(temporary_name)
         with os.fdopen(descriptor, "wb") as file:
-            file.write(_script(hook_type))
+            file.write(_script())
         temporary.chmod(0o755)
         temporary.replace(path)
     except OSError as error:
@@ -100,9 +88,9 @@ def install(repository: Repository, args: argparse.Namespace) -> int:
 
 
 def uninstall(repository: Repository, args: argparse.Namespace) -> int:
-    """Uninstall the requested Git hook if it is managed by prec."""
-    hook_type: str = args.hook_type
-    path = _hook_path(repository, hook_type)
+    """Uninstall the pre-commit hook if it is managed by prec."""
+    del args
+    path = _hook_path(repository)
     existing = _read_existing(path)
     if existing is None:
         print(f"prec hook is not installed at {path}")
