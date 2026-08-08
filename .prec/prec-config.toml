@@ -20,3 +20,7 @@ id = "tests"
 run = ["uv", "run", "pytest", "-q"]
 files = ["*.py", "pyproject.toml"]
 pass_filenames = false
+
+[[checks]]
+id = "end-of-file"
+files = ["*.py", "*.toml", "*.md"]

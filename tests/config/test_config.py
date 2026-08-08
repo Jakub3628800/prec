@@ -12,6 +12,10 @@ def test_empty_config() -> None:
     assert load("version = 1\nchecks = []\n").checks == ()
 
 
+def test_check_without_run_is_custom() -> None:
+    assert load('version = 1\n[[checks]]\nid = "custom"\n').checks == (Check(id="custom"),)
+
+
 def test_complete_check_and_defaults() -> None:
     config = load(
         """
@@ -50,11 +54,17 @@ timeout_seconds = 0.5
         ("version = 1\nchecks = {}", "checks: expected an array"),
         ('version = 1\nchecks = ["bad"]', "checks[0]: expected a table"),
         ('version = 1\n[[checks]]\nrun = ["x"]', "checks[0].id: required"),
-        ('version = 1\n[[checks]]\nid = "x"', "checks[0].run: required"),
         ('version = 1\n[[checks]]\nid = "Bad"\nrun = ["x"]', "must match"),
         ('version = 1\n[[checks]]\nid = "x"\nrun = []', "array must not be empty"),
         ('version = 1\n[[checks]]\nid = "x"\nrun = [""]', "executable must not be empty"),
-        ('version = 1\n[[checks]]\nid = "x"\nrun = ["./x"]', "resolved through PATH"),
+        (
+            'version = 1\n[[checks]]\nid = "x"\nrun = ["/absolute/x"]',
+            "relative to the repository",
+        ),
+        (
+            'version = 1\n[[checks]]\nid = "x"\nrun = ["../outside"]',
+            "relative to the repository",
+        ),
         (
             'version = 1\n[[checks]]\nid = "x"\nrun = ["x"]\nfiles = []',
             "array must not be empty",

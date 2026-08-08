@@ -8,6 +8,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from prec.config.config import Check, Config
+from prec.custom import custom_script_paths
 from prec.git.patterns import filter_paths
 from prec.runner.result import CheckResult, State
 
@@ -29,13 +30,27 @@ def _stop_process(process: subprocess.Popen[str]) -> None:
         process.wait()
 
 
+def _custom_command(check: Check, root: Path) -> tuple[str, ...] | str:
+    candidates = custom_script_paths(check.id)
+    existing = tuple(path for path in candidates if (root / path).is_file())
+    if not existing:
+        expected = " or ".join(candidates)
+        return f"custom check executable not found; expected {expected}"
+    if len(existing) > 1:
+        return f"custom check has multiple executables: {', '.join(existing)}"
+    return (existing[0], "--")
+
+
 def _run_one(
     check: Check,
     paths: tuple[str, ...],
     root: Path,
     environment: Mapping[str, str],
 ) -> CheckResult:
-    argv = [*check.run]
+    command: tuple[str, ...] | str = check.run or _custom_command(check, root)
+    if isinstance(command, str):
+        return CheckResult(check.id, State.ERROR, detail=command)
+    argv = [*command]
     if check.pass_filenames:
         argv.extend(paths)
 
@@ -57,7 +72,7 @@ def _run_one(
         return CheckResult(
             check.id,
             State.ERROR,
-            detail=f"command not found: {check.run[0]}",
+            detail=f"command not found: {command[0]}",
         )
     except OSError as error:
         return CheckResult(

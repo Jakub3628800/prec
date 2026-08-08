@@ -65,7 +65,7 @@ The `--` in commands such as Ruff marks the end of command options. It prevents 
 | Field | Required | Default | Description |
 |---|---:|---|---|
 | `id` | yes | — | Unique ID matching `[a-z][a-z0-9_-]*`, up to 64 characters. |
-| `run` | yes | — | Non-empty argv array. The first entry is resolved through `PATH`. |
+| `run` | no | custom check | Non-empty argv array. The first entry is resolved through `PATH` or is a repository-relative executable path. |
 | `files` | no | all candidates | Git-wildmatch include patterns. |
 | `exclude` | no | `[]` | Git-wildmatch exclusion patterns. |
 | `pass_filenames` | no | `true` | Append matching paths as separate argv entries. |
@@ -78,10 +78,11 @@ Unknown fields and invalid types are errors. Commands are argv arrays; shell str
 run = ["sh", "-c", "your command"]
 ```
 
-The executable in `run[0]` cannot contain `/`. Repository scripts can still be passed to an interpreter:
+When `run` is present, its executable may be a command resolved through `PATH` or an executable path relative to the repository. Absolute paths and paths containing `..` are rejected:
 
 ```toml
-run = ["python3", "scripts/check.py"]
+run = ["ruff", "check", "--"]
+run = ["scripts/check.py", "--"]
 ```
 
 ## Usage
@@ -93,9 +94,43 @@ prec run --staged            # exact contents of the Git index
 prec run --all               # all tracked and non-ignored files
 prec run ruff mypy           # selected checks, in configuration order
 prec list                    # list check IDs
+prec check add no-tabs       # scaffold and register a Python check
+prec check add no-tabs --language bash
 prec install                 # install the pre-commit hook
 prec uninstall               # uninstall the pre-commit hook
 ```
+
+### Custom checks
+
+Create an executable repository-local check and register it in the TOML configuration:
+
+```sh
+prec check add no-tabs --files '*.py'
+prec check add shell-policy --language bash --files '*.sh'
+```
+
+Python is the default language. Generated Python checks receive parsed filenames as
+`Path` objects in a `check(filenames)` function; generated Bash checks receive them in
+the `filenames` array. Implement that function and return zero for success or nonzero
+for failure. Check IDs determine their paths, for example:
+
+```text
+.prec/checks/no-tabs/no_tabs.py
+.prec/checks/shell-policy/shell_policy.sh
+```
+
+The generated TOML entry does not need a `run` field:
+
+```toml
+[[checks]]
+id = "no-tabs"
+files = ["*.py"]
+```
+
+When `run` is omitted, `prec` derives the script location from the ID and requires
+exactly one corresponding `.py` or `.sh` file. Generated scripts are executable and
+have no `prec` SDK dependency. Stage both the script and `.prec/prec-config.toml` before
+running with `--staged`.
 
 ### Git hooks
 

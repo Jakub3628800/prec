@@ -5,7 +5,7 @@ import math
 import re
 import tomllib
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from prec.errors.errors import ConfigError
@@ -30,7 +30,7 @@ _CHECK_FIELDS = frozenset(
 @dataclass(frozen=True, slots=True)
 class Check:
     id: str
-    run: tuple[str, ...]
+    run: tuple[str, ...] | None = None
     files: tuple[str, ...] | None = None
     exclude: tuple[str, ...] = ()
     pass_filenames: bool = True
@@ -42,6 +42,11 @@ class Check:
 class Config:
     version: int
     checks: tuple[Check, ...]
+
+
+def valid_check_id(value: str) -> bool:
+    """Return whether a value is a valid check identifier."""
+    return len(value) <= 64 and _ID_RE.fullmatch(value) is not None
 
 
 def _location(source: str, key: str | None = None) -> str:
@@ -112,25 +117,29 @@ def _parse_check(raw: Any, index: int) -> Check:
     check_id = _required(raw, "id", source)
     if not isinstance(check_id, str):
         raise ConfigError(f"{_location(source, 'id')}: expected a string")
-    if len(check_id) > 64 or not _ID_RE.fullmatch(check_id):
+    if not valid_check_id(check_id):
         raise ConfigError(
             f"{_location(source, 'id')}: must match ^[a-z][a-z0-9_-]*$ and be at most 64 characters"
         )
 
-    run = _string_array(
-        _required(raw, "run", source),
-        source=source,
-        field="run",
-        allow_empty=False,
-        allow_empty_strings=True,
-    )
-    if not run[0]:
-        raise ConfigError(f"{_location(source, 'run')}[0]: executable must not be empty")
-    if "/" in run[0]:
-        location = _location(source, "run")
-        raise ConfigError(
-            f"{location}[0]: v1 executables must be command names resolved through PATH"
+    run: tuple[str, ...] | None = None
+    if "run" in raw:
+        run = _string_array(
+            raw["run"],
+            source=source,
+            field="run",
+            allow_empty=False,
+            allow_empty_strings=True,
         )
+        if not run[0]:
+            raise ConfigError(f"{_location(source, 'run')}[0]: executable must not be empty")
+        if "/" in run[0]:
+            executable = PurePosixPath(run[0])
+            if executable.is_absolute() or ".." in executable.parts:
+                location = _location(source, "run")
+                raise ConfigError(
+                    f"{location}[0]: executable path must be relative to the repository"
+                )
 
     files: tuple[str, ...] | None = None
     if "files" in raw:
