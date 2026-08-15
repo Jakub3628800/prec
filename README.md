@@ -7,6 +7,7 @@ The goal of prec is to group all required checks into one command invocation and
 ## Features
 
 - only execute checks on changed files
+- watch the worktree or Git index and rerun checks after changes
 
 ## Requirements
 
@@ -94,6 +95,8 @@ prec                         # current changes and untracked files
 prec run                     # same as bare prec
 prec run --staged            # exact contents of the Git index
 prec run --all               # all tracked and non-ignored files
+prec run --watch             # run now, then rerun when selected files change
+prec run --watch --staged    # rerun when the Git index changes
 prec run ruff mypy           # selected checks, in configuration order
 prec list                    # list check IDs
 prec validate                # resolve every check without running commands
@@ -161,6 +164,18 @@ With no source option, `prec` selects tracked files differing from `HEAD` plus u
 
 Candidate paths are repository-relative, deduplicated, UTF-8 validated, and sorted by their UTF-8 byte representation.
 
+### Watch mode
+
+`--watch` runs checks immediately, then polls for repository changes and reruns after the
+state is stable for one polling interval. The default and `--all` modes watch candidate
+paths and the configuration file. `--staged` watches indexed paths and blob IDs plus
+`HEAD`; each rerun receives a fresh disposable index snapshot.
+
+A change made while checks are running schedules another run after the current run finishes.
+Watch mode remains active after check failures and, after its initial successful setup,
+configuration errors. Generated files should be ignored or excluded if checks rewrite them
+on every invocation. Press Ctrl-C to stop watch mode.
+
 ## Output
 
 Each check produces one result line:
@@ -195,7 +210,7 @@ Checks continue after failures and errors. Runner errors take precedence over co
 
 ## Deliberate v1 limits
 
-Version 1 has no caching, parallel execution, watcher, environment management, machine-readable output, configuration includes, or plugin API.
+Version 1 has no caching, parallel execution, environment management, machine-readable output, configuration includes, or plugin API.
 
 ## Development
 
