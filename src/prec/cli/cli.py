@@ -19,6 +19,8 @@ from prec.cli.version import configure_parser as configure_version_parser
 from prec.errors import PrecError, TerminationRequested
 from prec.git.repository import Repository
 
+_LITERAL_DOUBLE_DASH = "\0prec-literal-double-dash"
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="prec", description="Run local checks against Git files.")
@@ -34,7 +36,7 @@ def _parser() -> argparse.ArgumentParser:
     validate_parser = subparsers.add_parser("validate", help="validate checks without running")
     configure_validate_parser(validate_parser)
 
-    check_parser = subparsers.add_parser("check", help="manage custom checks")
+    check_parser = subparsers.add_parser("check", help="manage configured checks")
     configure_check_parser(check_parser)
 
     install_parser = subparsers.add_parser("install", help="install a Git hook")
@@ -60,6 +62,17 @@ def _normalize_argv(arguments: Sequence[str]) -> list[str]:
         "--help",
         "--version",
     }:
+        if len(argv) >= 3 and argv[:2] in (["check", "add"], ["check", "edit"]):
+            try:
+                separator = argv.index("--", 3)
+            except ValueError:
+                pass
+            else:
+                argv[separator] = "--run"
+                argv[separator + 1 :] = [
+                    _LITERAL_DOUBLE_DASH if value == "--" else value
+                    for value in argv[separator + 1 :]
+                ]
         return argv
     if argv[0].startswith("-"):
         return ["run", *argv]
@@ -71,6 +84,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = _normalize_argv(sys.argv[1:] if argv is None else argv)
     parser = _parser()
     args = parser.parse_args(arguments)
+    if getattr(args, "run", None) is not None:
+        args.run = ["--" if value == _LITERAL_DOUBLE_DASH else value for value in args.run]
     try:
         repository = Repository.discover(Path.cwd())
         if args.command == "run":

@@ -1,12 +1,18 @@
-"""Create repository-local custom checks."""
+"""Manage configured checks and repository-local custom checks."""
+
+from __future__ import annotations
 
 import argparse
-import json
+import contextlib
 import os
-import re
 import stat
 import tempfile
 from pathlib import Path
+from typing import Any
+
+import tomlkit
+from tomlkit.container import Container
+from tomlkit.items import AoT, Table
 
 from prec.config import CONFIG_PATH, loads_config, valid_check_id
 from prec.custom import custom_script_path, custom_script_paths
@@ -56,57 +62,65 @@ check "$@"
 """
 
 
+def _configuration_arguments(parser: argparse.ArgumentParser, *, editing: bool) -> None:
+    parser.add_argument("--files", action="append", metavar="PATTERN")
+    parser.add_argument("--exclude", action="append", metavar="PATTERN")
+    parser.add_argument("--pass-filenames", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--always-run", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--timeout-seconds", type=float, metavar="SECONDS")
+    parser.add_argument("--batch-size", type=int, metavar="N")
+    parser.add_argument("--script", metavar="PATH")
+    parser.add_argument("--run", nargs=argparse.REMAINDER, metavar="COMMAND")
+    if editing:
+        parser.add_argument("--add-files", action="append", default=[], metavar="PATTERN")
+        parser.add_argument("--remove-files", action="append", default=[], metavar="PATTERN")
+        parser.add_argument("--clear-files", action="store_true")
+        parser.add_argument("--add-exclude", action="append", default=[], metavar="PATTERN")
+        parser.add_argument("--remove-exclude", action="append", default=[], metavar="PATTERN")
+        parser.add_argument("--clear-exclude", action="store_true")
+        parser.add_argument("--clear-timeout", action="store_true")
+        parser.add_argument("--clear-batch-size", action="store_true")
+
+
 def configure_parser(parser: argparse.ArgumentParser) -> None:
-    """Configure custom-check management commands."""
+    """Configure check-management commands."""
     commands = parser.add_subparsers(dest="check_command", required=True)
-    add_parser = commands.add_parser("add", help="create and register a custom check")
+
+    list_parser = commands.add_parser("list", help="list configured checks")
+    list_parser.add_argument("--verbose", action="store_true")
+
+    add_parser = commands.add_parser("add", help="add a command or custom check")
     add_parser.add_argument("check_id", metavar="ID")
+    add_parser.add_argument("--custom", choices=("python", "bash"), metavar="LANGUAGE")
     add_parser.add_argument(
         "--language",
         choices=("python", "bash"),
-        default="python",
-        help="language for the generated check (default: python)",
+        dest="legacy_language",
+        help=argparse.SUPPRESS,
     )
-    add_parser.add_argument(
-        "--files",
-        action="append",
-        default=[],
-        metavar="PATTERN",
-        help="Git-wildmatch include pattern; may be repeated",
+    _configuration_arguments(add_parser, editing=False)
+
+    edit_parser = commands.add_parser("edit", help="edit selected fields of a check")
+    edit_parser.add_argument("check_id", metavar="ID")
+    _configuration_arguments(edit_parser, editing=True)
+
+    remove_parser = commands.add_parser("remove", help="remove a configured check")
+    remove_parser.add_argument("check_id", metavar="ID")
+    remove_parser.add_argument(
+        "--delete-script",
+        action="store_true",
+        help="also delete its conventionally generated custom script",
     )
 
+    commands.add_parser("suggest", help="suggest checks from repository configuration")
 
-def _config_with_check(
-    content: bytes | None, check_id: str, script: str, files: list[str]
-) -> bytes:
-    if content is None:
-        content = b"version = 1\n"
-        config_has_checks = False
-    else:
-        config = loads_config(content)
-        if any(check.id == check_id for check in config.checks):
-            raise UsageError(f"check id `{check_id}` is already configured")
-        config_has_checks = bool(config.checks)
 
-    if not config_has_checks and b"checks" in content:
-        content, substitutions = re.subn(
-            rb"(?m)^[ \t]*checks[ \t]*=[ \t]*\[[ \t]*\][ \t]*(?:#.*)?(?:\r?\n|$)",
-            b"",
-            content,
-            count=1,
-        )
-        if substitutions != 1:
-            raise ConfigError(
-                f"{CONFIG_PATH}: an empty `checks` array must be written as `checks = []` "
-                "before a check can be added"
-            )
-
-    separator = b"" if content.endswith(b"\n\n") else b"\n" if content.endswith(b"\n") else b"\n\n"
-    registration = [f"[[checks]]\nid = {json.dumps(check_id)}\nscript = {json.dumps(script)}\n"]
-    if files:
-        patterns = ", ".join(json.dumps(pattern) for pattern in files)
-        registration.append(f"files = [{patterns}]\n")
-    return content + separator + "".join(registration).encode()
+def _validate_patterns(patterns: list[str], option: str) -> None:
+    for pattern in patterns:
+        try:
+            validate_pattern(pattern)
+        except PatternError as error:
+            raise UsageError(f"invalid {option} pattern: {error}") from error
 
 
 def _prepare_file(path: Path, content: bytes, mode: int) -> Path:
@@ -125,65 +139,373 @@ def _prepare_file(path: Path, content: bytes, mode: int) -> Path:
         raise ConfigError(f"could not write {path}: {error}") from error
 
 
-def add_check(repository: Repository, args: argparse.Namespace) -> int:
-    """Scaffold a custom check and register it in the configuration."""
-    check_id: str = args.check_id
-    files: list[str] = args.files
-    if not valid_check_id(check_id):
-        raise UsageError("check id must match ^[a-z][a-z0-9_-]*$ and be at most 64 characters")
-    for pattern in files:
-        try:
-            validate_pattern(pattern)
-        except PatternError as error:
-            raise UsageError(f"invalid --files pattern: {error}") from error
-
-    template = _PYTHON_TEMPLATE if args.language == "python" else _BASH_TEMPLATE
-    relative_script = custom_script_path(check_id, args.language)
-    script_path = repository.root / relative_script
-    config_path = repository.root / CONFIG_PATH
-
-    existing = tuple(
-        path
-        for path in custom_script_paths(check_id)
-        if (repository.root / path).exists() or (repository.root / path).is_symlink()
-    )
-    if existing:
-        raise UsageError(f"custom check path already exists: {', '.join(existing)}")
-    if config_path.is_symlink():
+def _read_document(repository: Repository) -> tuple[Container, int]:
+    path = repository.root / CONFIG_PATH
+    if path.is_symlink():
         raise ConfigError(f"{CONFIG_PATH}: configuration must not be a symbolic link")
     try:
-        config_content = config_path.read_bytes()
-        config_mode = stat.S_IMODE(config_path.stat().st_mode)
+        content = path.read_bytes()
+        mode = stat.S_IMODE(path.stat().st_mode)
     except FileNotFoundError:
-        config_content = None
-        config_mode = 0o644
+        document = tomlkit.document()
+        document.add("version", 1)
+        document.add(tomlkit.nl())
+        document.add("checks", tomlkit.array())
+        return document, 0o644
     except OSError as error:
         raise ConfigError(f"{CONFIG_PATH}: cannot read configuration: {error}") from error
 
-    updated_config = _config_with_check(config_content, check_id, relative_script, files)
-    script_temporary = _prepare_file(script_path, template.encode(), 0o755)
+    loads_config(content)
     try:
-        config_temporary = _prepare_file(config_path, updated_config, config_mode)
+        return tomlkit.parse(content.decode("utf-8")), mode
+    except (UnicodeDecodeError, tomlkit.exceptions.ParseError) as error:
+        raise ConfigError(f"{CONFIG_PATH}: invalid TOML: {error}") from error
+
+
+def _checks(document: Container) -> AoT:
+    value = document.get("checks")
+    if isinstance(value, AoT):
+        return value
+    raise ConfigError(f"{CONFIG_PATH}: `checks` must be an array of tables")
+
+
+def _append_check(document: Container, table: Table) -> None:
+    value = document.get("checks")
+    if isinstance(value, AoT):
+        value.append(table)
+        return
+    if value == []:
+        comment = value.trivia.comment
+        if comment:
+            table.comment(comment.removeprefix("#").strip())
+        checks = tomlkit.aot()
+        checks.append(table)
+        document["checks"] = checks
+        return
+    raise ConfigError(f"{CONFIG_PATH}: `checks` must be an array of tables")
+
+
+def _render_and_validate(document: Container) -> bytes:
+    rendered = tomlkit.dumps(document).encode()
+    loads_config(rendered)
+    return rendered
+
+
+def _write_document(repository: Repository, document: Container, mode: int) -> None:
+    path = repository.root / CONFIG_PATH
+    temporary = _prepare_file(path, _render_and_validate(document), mode)
+    try:
+        temporary.replace(path)
+    except OSError as error:
+        temporary.unlink(missing_ok=True)
+        raise ConfigError(f"could not update {CONFIG_PATH}: {error}") from error
+
+
+def _find_check(checks: AoT, check_id: str) -> tuple[int, Table]:
+    for index, table in enumerate(checks):
+        if table.get("id") == check_id:
+            return index, table
+    raise UsageError(f"check id `{check_id}` is not configured")
+
+
+def _set_optional(table: Table, field: str, value: Any, default: Any) -> None:
+    if value == default:
+        table.pop(field, None)
+    else:
+        table[field] = value
+
+
+def _apply_common_values(table: Table, args: argparse.Namespace, *, adding: bool) -> None:
+    if args.files is not None:
+        _validate_patterns(args.files, "--files")
+        if not args.files:
+            raise UsageError("--files must not be empty")
+        table["files"] = args.files
+    if args.exclude is not None:
+        _validate_patterns(args.exclude, "--exclude")
+        _set_optional(table, "exclude", args.exclude, [])
+    if args.pass_filenames is not None:
+        _set_optional(table, "pass_filenames", args.pass_filenames, True)
+    if args.always_run is not None:
+        _set_optional(table, "always_run", args.always_run, False)
+    if args.timeout_seconds is not None:
+        table["timeout_seconds"] = args.timeout_seconds
+    if args.batch_size is not None:
+        table["batch_size"] = args.batch_size
+
+    run = args.run
+    if run is not None:
+        if not run:
+            raise UsageError("a command is required after `--`")
+        table.pop("script", None)
+        table["run"] = run
+    if args.script is not None:
+        if run is not None:
+            raise UsageError("choose either a command or --script")
+        table.pop("run", None)
+        table["script"] = args.script
+    if adding and run is None and args.script is None:
+        raise UsageError("provide a command after `--`, --script, or --custom")
+
+
+def _scaffold(repository: Repository, check_id: str, language: str) -> tuple[str, Path]:
+    relative = custom_script_path(check_id, language)
+    path = repository.root / relative
+    existing = tuple(
+        candidate
+        for candidate in custom_script_paths(check_id)
+        if (repository.root / candidate).exists() or (repository.root / candidate).is_symlink()
+    )
+    if existing:
+        raise UsageError(f"custom check path already exists: {', '.join(existing)}")
+    template = _PYTHON_TEMPLATE if language == "python" else _BASH_TEMPLATE
+    return relative, _prepare_file(path, template.encode(), 0o755)
+
+
+def add_check(repository: Repository, args: argparse.Namespace) -> int:
+    """Add a command check or scaffold a custom check."""
+    check_id: str = args.check_id
+    if not valid_check_id(check_id):
+        raise UsageError("check id must match ^[a-z][a-z0-9_-]*$ and be at most 64 characters")
+
+    document, mode = _read_document(repository)
+    config = loads_config(tomlkit.dumps(document).encode())
+    if any(check.id == check_id for check in config.checks):
+        raise UsageError(f"check id `{check_id}` already exists in the configuration")
+
+    language = args.custom or args.legacy_language
+    if args.custom and args.legacy_language:
+        raise UsageError("choose either --custom or --language")
+    if language and (args.run is not None or args.script is not None):
+        raise UsageError("--custom cannot be combined with a command or --script")
+    # Preserve the original `prec check add ID` behavior.
+    if language is None and args.run is None and args.script is None:
+        language = "python"
+
+    table = tomlkit.table()
+    table.add("id", check_id)
+    script_temporary: Path | None = None
+    script_path: Path | None = None
+    relative_script: str | None = None
+    if language:
+        relative_script, script_temporary = _scaffold(repository, check_id, language)
+        script_path = repository.root / relative_script
+        table.add("script", relative_script)
+        _apply_common_values(table, args, adding=False)
+    else:
+        _apply_common_values(table, args, adding=True)
+    _append_check(document, table)
+
+    try:
+        config_temporary = _prepare_file(
+            repository.root / CONFIG_PATH, _render_and_validate(document), mode
+        )
     except ConfigError:
-        script_temporary.unlink(missing_ok=True)
+        if script_temporary:
+            script_temporary.unlink(missing_ok=True)
         raise
     try:
-        script_temporary.replace(script_path)
-        config_temporary.replace(config_path)
+        if script_temporary and script_path:
+            script_temporary.replace(script_path)
+        config_temporary.replace(repository.root / CONFIG_PATH)
     except OSError as error:
-        script_temporary.unlink(missing_ok=True)
         config_temporary.unlink(missing_ok=True)
-        script_path.unlink(missing_ok=True)
-        raise ConfigError(f"could not register custom check: {error}") from error
+        if script_temporary:
+            script_temporary.unlink(missing_ok=True)
+        if script_path:
+            script_path.unlink(missing_ok=True)
+        raise ConfigError(f"could not register check: {error}") from error
 
-    print(f"Created {relative_script}")
+    if relative_script:
+        print(f"Created {relative_script}")
     print(f"Registered `{check_id}` in {CONFIG_PATH}")
-    print("Stage both files before using `prec run --staged`.")
+    if relative_script:
+        print("Stage both files before using `prec run --staged`.")
+    return 0
+
+
+def _updated_sequence(
+    table: Table,
+    field: str,
+    replacement: list[str] | None,
+    additions: list[str],
+    removals: list[str],
+    clear: bool,
+) -> None:
+    operations = sum((replacement is not None, bool(additions), bool(removals), clear))
+    if operations > 1:
+        raise UsageError(f"choose only one operation for --{field.replace('_', '-')}")
+    if not operations:
+        return
+    _validate_patterns((replacement or []) + additions + removals, f"--{field.replace('_', '-')}")
+    if clear:
+        table.pop(field, None)
+        return
+    if replacement is not None:
+        if field == "files" and not replacement:
+            raise UsageError("--files must not be empty")
+        _set_optional(table, field, replacement, [] if field == "exclude" else None)
+        return
+    values = list(table.get(field, []))
+    for value in additions:
+        if value not in values:
+            values.append(value)
+    for value in removals:
+        if value not in values:
+            raise UsageError(f"pattern `{value}` is not present in `{field}`")
+        values.remove(value)
+    if values:
+        table[field] = values
+    else:
+        table.pop(field, None)
+
+
+def edit_check(repository: Repository, args: argparse.Namespace) -> int:
+    """Edit only explicitly selected fields of a configured check."""
+    document, mode = _read_document(repository)
+    _, table = _find_check(_checks(document), args.check_id)
+    before = tomlkit.dumps(document)
+
+    _updated_sequence(
+        table, "files", args.files, args.add_files, args.remove_files, args.clear_files
+    )
+    _updated_sequence(
+        table,
+        "exclude",
+        args.exclude,
+        args.add_exclude,
+        args.remove_exclude,
+        args.clear_exclude,
+    )
+    # Sequence values are handled above; apply the remaining common fields.
+    files, exclude = args.files, args.exclude
+    args.files = args.exclude = None
+    try:
+        _apply_common_values(table, args, adding=False)
+    finally:
+        args.files, args.exclude = files, exclude
+    if args.clear_timeout:
+        if args.timeout_seconds is not None:
+            raise UsageError("choose either --timeout-seconds or --clear-timeout")
+        table.pop("timeout_seconds", None)
+    if args.clear_batch_size:
+        if args.batch_size is not None:
+            raise UsageError("choose either --batch-size or --clear-batch-size")
+        table.pop("batch_size", None)
+
+    if tomlkit.dumps(document) == before:
+        raise UsageError("no changes requested")
+    _write_document(repository, document, mode)
+    print(f"Updated `{args.check_id}` in {CONFIG_PATH}")
+    return 0
+
+
+def remove_check(repository: Repository, args: argparse.Namespace) -> int:
+    """Remove a check registration and optionally its generated script."""
+    document, mode = _read_document(repository)
+    checks = _checks(document)
+    index, _ = _find_check(checks, args.check_id)
+    parsed = loads_config(tomlkit.dumps(document).encode())
+    check = next(check for check in parsed.checks if check.id == args.check_id)
+    script_path: Path | None = None
+    if args.delete_script:
+        if check.script not in custom_script_paths(check.id):
+            raise UsageError("--delete-script only supports conventionally generated scripts")
+        script_path = repository.root / check.script
+        if not script_path.is_file() or script_path.is_symlink():
+            raise UsageError(f"custom check script not found: {check.script}")
+
+    del checks[index]
+    if not checks:
+        document["checks"] = tomlkit.array()
+    _write_document(repository, document, mode)
+    print(f"Removed `{args.check_id}` from {CONFIG_PATH}")
+    if script_path:
+        try:
+            script_path.unlink()
+        except OSError as error:
+            raise ConfigError(f"could not delete custom check script: {error}") from error
+        with contextlib.suppress(OSError):
+            script_path.parent.rmdir()
+        print(f"Deleted {check.script}")
+    return 0
+
+
+def list_checks(repository: Repository, args: argparse.Namespace) -> int:
+    """List configured checks in configuration order."""
+    document, _ = _read_document(repository)
+    config = loads_config(tomlkit.dumps(document).encode())
+    for check in config.checks:
+        if args.verbose:
+            source = check.script or " ".join(check.run or ())
+            print(f"{check.id}\t{source}")
+        else:
+            print(check.id)
+    return 0
+
+
+def _suggestions(root: Path) -> list[tuple[str, str, str]]:
+    suggestions: list[tuple[str, str, str]] = []
+    pyproject = root / "pyproject.toml"
+    if pyproject.is_file():
+        text = pyproject.read_text(errors="replace")
+        if "ruff" in text:
+            suggestions.append(
+                ("ruff", "Ruff configuration detected", "--files '*.py' -- ruff check --")
+            )
+        if "mypy" in text:
+            suggestions.append(("mypy", "mypy configuration detected", "--files '*.py' -- mypy --"))
+        if "pytest" in text:
+            suggestions.append(
+                ("tests", "pytest configuration detected", "--no-pass-filenames -- pytest -q")
+            )
+    package_json = root / "package.json"
+    if package_json.is_file():
+        text = package_json.read_text(errors="replace")
+        if "eslint" in text:
+            suggestions.append(
+                (
+                    "eslint",
+                    "ESLint dependency detected",
+                    "--files '*.js' --files '*.jsx' --files '*.ts' --files '*.tsx' "
+                    "-- npx eslint --",
+                )
+            )
+    if (root / "Cargo.toml").is_file():
+        suggestions.append(
+            ("cargo-check", "Cargo project detected", "--no-pass-filenames -- cargo check")
+        )
+    if (root / "go.mod").is_file():
+        suggestions.append(
+            ("go-test", "Go module detected", "--no-pass-filenames -- go test ./...")
+        )
+    return suggestions
+
+
+def suggest_checks(repository: Repository) -> int:
+    """Print read-only suggestions that are not already configured."""
+    document, _ = _read_document(repository)
+    configured = {check.id for check in loads_config(tomlkit.dumps(document).encode()).checks}
+    suggestions = [item for item in _suggestions(repository.root) if item[0] not in configured]
+    if not suggestions:
+        print("No additional checks suggested.")
+        return 0
+    for check_id, reason, arguments in suggestions:
+        print(f"{check_id}\t{reason}")
+        print(f"  prec check add {check_id} {arguments}")
     return 0
 
 
 def manage_checks(repository: Repository, args: argparse.Namespace) -> int:
-    """Dispatch a custom-check management command."""
+    """Dispatch a check-management command."""
+    if args.check_command == "list":
+        return list_checks(repository, args)
     if args.check_command == "add":
         return add_check(repository, args)
+    if args.check_command == "edit":
+        return edit_check(repository, args)
+    if args.check_command == "remove":
+        return remove_check(repository, args)
+    if args.check_command == "suggest":
+        return suggest_checks(repository)
     raise UsageError(f"unknown check command: {args.check_command}")

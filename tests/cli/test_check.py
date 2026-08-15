@@ -107,3 +107,148 @@ def test_generated_check_executes_from_staged_snapshot(repo: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "passed (exit code: 0)" in result.stdout
+
+
+def test_add_command_preserves_comments_and_exact_argv(repo: Path) -> None:
+    config_path = repo / ".prec/prec-config.toml"
+    config_path.write_text("# project checks\nversion = 1\n\nchecks = [] # keep this comment\n")
+
+    result = run_prec(
+        repo,
+        "check",
+        "add",
+        "ruff",
+        "--files",
+        "*.py",
+        "--exclude",
+        "vendor/",
+        "--",
+        "ruff",
+        "check",
+        "--",
+    )
+
+    assert result.returncode == 0, result.stderr
+    content = config_path.read_text()
+    assert "# project checks" in content
+    assert "# keep this comment" in content
+    check = load_worktree_config(repo).checks[0]
+    assert check.id == "ruff"
+    assert check.run == ("ruff", "check", "--")
+    assert check.files == ("*.py",)
+    assert check.exclude == ("vendor/",)
+
+
+def test_check_list_supports_nested_discovery_and_verbose_output(repo: Path) -> None:
+    added = run_prec(repo, "check", "add", "truth", "--", "true")
+    assert added.returncode == 0, added.stderr
+    nested = repo / "one" / "two"
+    nested.mkdir(parents=True)
+
+    plain = run_prec(nested, "check", "list")
+    verbose = run_prec(nested, "check", "list", "--verbose")
+
+    assert plain.stdout == "truth\n"
+    assert verbose.stdout == "truth\ttrue\n"
+
+
+def test_edit_updates_selected_fields_and_preserves_other_content(repo: Path) -> None:
+    config_path = repo / ".prec/prec-config.toml"
+    config_path.write_text(
+        "# heading\nversion = 1\n\n"
+        "[[checks]]\n"
+        'id = "lint" # identity\n'
+        'run = ["old"]\n'
+        'files = ["*.py"]\n'
+        'exclude = ["vendor/"]\n'
+    )
+
+    result = run_prec(
+        repo,
+        "check",
+        "edit",
+        "lint",
+        "--add-files",
+        "*.pyi",
+        "--clear-exclude",
+        "--no-pass-filenames",
+        "--timeout-seconds",
+        "12.5",
+        "--",
+        "ruff",
+        "check",
+        "--",
+    )
+
+    assert result.returncode == 0, result.stderr
+    content = config_path.read_text()
+    assert "# heading" in content
+    assert "# identity" in content
+    check = load_worktree_config(repo).checks[0]
+    assert check.run == ("ruff", "check", "--")
+    assert check.files == ("*.py", "*.pyi")
+    assert check.exclude == ()
+    assert check.pass_filenames is False
+    assert check.timeout_seconds == 12.5
+
+
+def test_edit_rejects_noop_and_conflicting_list_operations(repo: Path) -> None:
+    added = run_prec(repo, "check", "add", "truth", "--", "true")
+    assert added.returncode == 0, added.stderr
+    config_path = repo / ".prec/prec-config.toml"
+    before = config_path.read_bytes()
+
+    noop = run_prec(repo, "check", "edit", "truth")
+    conflict = run_prec(
+        repo,
+        "check",
+        "edit",
+        "truth",
+        "--files",
+        "*.py",
+        "--add-files",
+        "*.pyi",
+    )
+
+    assert noop.returncode == 2
+    assert "no changes requested" in noop.stderr
+    assert conflict.returncode == 2
+    assert "choose only one operation" in conflict.stderr
+    assert config_path.read_bytes() == before
+
+
+def test_remove_keeps_script_by_default_and_deletes_only_when_requested(repo: Path) -> None:
+    first = run_prec(repo, "check", "add", "keep", "--custom", "python")
+    assert first.returncode == 0, first.stderr
+    kept_script = repo / ".prec/checks/keep/keep.py"
+
+    removed = run_prec(repo, "check", "remove", "keep")
+
+    assert removed.returncode == 0, removed.stderr
+    assert kept_script.is_file()
+    assert load_worktree_config(repo).checks == ()
+
+    second = run_prec(repo, "check", "add", "discard", "--custom", "bash")
+    assert second.returncode == 0, second.stderr
+    discarded_script = repo / ".prec/checks/discard/discard.sh"
+
+    deleted = run_prec(repo, "check", "remove", "discard", "--delete-script")
+
+    assert deleted.returncode == 0, deleted.stderr
+    assert not discarded_script.exists()
+    assert "Deleted .prec/checks/discard/discard.sh" in deleted.stdout
+
+
+def test_suggest_reports_detected_unconfigured_checks_without_writing(repo: Path) -> None:
+    config_path = repo / ".prec/prec-config.toml"
+    config_path.write_text("version = 1\nchecks = []\n")
+    (repo / "pyproject.toml").write_text("[tool.ruff]\n[tool.pytest.ini_options]\n")
+    before = config_path.read_bytes()
+
+    result = run_prec(repo, "check", "suggest")
+
+    assert result.returncode == 0, result.stderr
+    assert "ruff\tRuff configuration detected" in result.stdout
+    assert "tests\tpytest configuration detected" in result.stdout
+    assert "prec check add ruff --files '*.py' -- ruff check --" in result.stdout
+    assert config_path.read_bytes() == before

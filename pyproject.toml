@@ -9,7 +9,7 @@ description = "A small, Git-aware local check runner"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "prec contributors" }]
-dependencies = ["pathspec>=0.12,<1"]
+dependencies = ["pathspec>=0.12,<1", "tomlkit>=0.13,<1"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
