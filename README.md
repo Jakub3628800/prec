@@ -65,12 +65,14 @@ The `--` in commands such as Ruff marks the end of command options. It prevents 
 | Field | Required | Default | Description |
 |---|---:|---|---|
 | `id` | yes | — | Unique ID matching `[a-z][a-z0-9_-]*`, up to 64 characters. |
-| `run` | no | custom check | Non-empty argv array. The first entry is resolved through `PATH` or is a repository-relative executable path. |
+| `run` | one of `run`/`script` | — | Non-empty argv array. The first entry is resolved through `PATH` or is a repository-relative executable path. |
+| `script` | one of `run`/`script` | — | Executable repository-relative custom-check path. Symbolic links are rejected. |
 | `files` | no | all candidates | Git-wildmatch include patterns. |
 | `exclude` | no | `[]` | Git-wildmatch exclusion patterns. |
 | `pass_filenames` | no | `true` | Append matching paths as separate argv entries. |
 | `always_run` | no | `false` | Run even when no paths match. |
 | `timeout_seconds` | no | no timeout | Positive finite command timeout. |
+| `batch_size` | no | one invocation | Maximum filenames passed per invocation. Batch results are combined into one check result. |
 
 Unknown fields and invalid types are errors. Commands are argv arrays; shell strings are not accepted. To use shell features, invoke a shell explicitly:
 
@@ -94,6 +96,7 @@ prec run --staged            # exact contents of the Git index
 prec run --all               # all tracked and non-ignored files
 prec run ruff mypy           # selected checks, in configuration order
 prec list                    # list check IDs
+prec validate                # resolve every check without running commands
 prec check add no-tabs       # scaffold and register a Python check
 prec check add no-tabs --language bash
 prec install                 # install the pre-commit hook
@@ -119,18 +122,28 @@ for failure. Check IDs determine their paths, for example:
 .prec/checks/shell-policy/shell_policy.sh
 ```
 
-The generated TOML entry does not need a `run` field:
+The generated TOML entry names the script explicitly:
 
 ```toml
 [[checks]]
 id = "no-tabs"
+script = ".prec/checks/no-tabs/no_tabs.py"
 files = ["*.py"]
 ```
 
-When `run` is omitted, `prec` derives the script location from the ID and requires
-exactly one corresponding `.py` or `.sh` file. Generated scripts are executable and
-have no `prec` SDK dependency. Stage both the script and `.prec/prec-config.toml` before
-running with `--staged`.
+Generated scripts are executable and have no `prec` SDK dependency. The explicit path
+makes configuration mistakes detectable before execution. Stage both the script and
+`.prec/prec-config.toml` before running with `--staged`.
+
+### Validation and batching
+
+`prec validate` loads the worktree configuration, resolves every command and script, and
+reports matching file counts without executing checks. A normal run also plans all checks
+first; if any executable is invalid, no commands run.
+
+By default, matching filenames are passed in one invocation. For unusually large file sets,
+set `batch_size` to a positive integer. Each batch runs sequentially and appears as one
+logical result. Because repeated invocation can change tool semantics, batching is explicit.
 
 ### Git hooks
 
@@ -153,18 +166,21 @@ Candidate paths are repository-relative, deduplicated, UTF-8 validated, and sort
 Each check produces one result line:
 
 ```text
-ruff..............................................success (exit code: 0)
-tests...............................................error (exit code: 1)
+ruff...............................................passed (exit code: 0)
+tests...............................................failed (exit code: 1)
 docs........................................................skipped
-missing...........................................other (exit code: N/A)
+missing...........................................error (exit code: N/A)
 ```
 
-- `success`: the child exited with code `0`;
-- `error`: the child exited with code `1`;
+- `passed`: every invocation exited with code `0`;
+- `failed`: a child command exited nonzero;
 - `skipped`: no files matched and `always_run` is false;
-- `other`: another exit code, spawn failure, timeout, or runner problem.
+- `error`: configuration, resolution, spawn, timeout, or runner problem.
 
-On interactive terminals, `success` is green and `error` is red. Set `NO_COLOR` to disable color. Captured stdout and stderr are suppressed on success and displayed in labeled sections for `error` and `other`.
+On interactive terminals, `passed` is green and failures and errors are red. Set `NO_COLOR`
+to disable color. Captured output is suppressed on success and displayed for failures and
+errors. Each stream is capped at 1,000,000 bytes so a runaway check cannot consume unbounded
+runner memory.
 
 ### `prec` exit codes
 
@@ -179,7 +195,7 @@ Checks continue after failures and errors. Runner errors take precedence over co
 
 ## Deliberate v1 limits
 
-Version 1 has no caching, parallel execution, watcher, environment management, machine-readable output, configuration includes, plugin API, or special `.prec/hooks/` behavior.
+Version 1 has no caching, parallel execution, watcher, environment management, machine-readable output, configuration includes, or plugin API.
 
 ## Development
 

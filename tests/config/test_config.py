@@ -12,8 +12,10 @@ def test_empty_config() -> None:
     assert load("version = 1\nchecks = []\n").checks == ()
 
 
-def test_check_without_run_is_custom() -> None:
-    assert load('version = 1\n[[checks]]\nid = "custom"\n').checks == (Check(id="custom"),)
+def test_explicit_custom_script() -> None:
+    assert load(
+        'version = 1\n[[checks]]\nid = "custom"\nscript = ".prec/checks/custom.py"\n'
+    ).checks == (Check(id="custom", script=".prec/checks/custom.py"),)
 
 
 def test_complete_check_and_defaults() -> None:
@@ -28,6 +30,7 @@ exclude = ["vendor/"]
 pass_filenames = false
 always_run = true
 timeout_seconds = 0.5
+batch_size = 100
 """
     )
     assert config.checks == (
@@ -39,6 +42,7 @@ timeout_seconds = 0.5
             pass_filenames=False,
             always_run=True,
             timeout_seconds=0.5,
+            batch_size=100,
         ),
     )
 
@@ -54,6 +58,14 @@ timeout_seconds = 0.5
         ("version = 1\nchecks = {}", "checks: expected an array"),
         ('version = 1\nchecks = ["bad"]', "checks[0]: expected a table"),
         ('version = 1\n[[checks]]\nrun = ["x"]', "checks[0].id: required"),
+        ('version = 1\n[[checks]]\nid = "x"', "exactly one"),
+        (
+            'version = 1\n[[checks]]\nid = "x"\nrun = ["x"]\nscript = "x"',
+            "exactly one",
+        ),
+        ('version = 1\n[[checks]]\nid = "x"\nscript = "../x"', "repository-relative"),
+        ('version = 1\n[[checks]]\nid = "x"\nscript = "."', "repository-relative"),
+        ('version = 1\n[[checks]]\nid = "x"\nscript = "bad\\u0000path"', "repository-relative"),
         ('version = 1\n[[checks]]\nid = "Bad"\nrun = ["x"]', "must match"),
         ('version = 1\n[[checks]]\nid = "x"\nrun = []', "array must not be empty"),
         ('version = 1\n[[checks]]\nid = "x"\nrun = [""]', "executable must not be empty"),
@@ -80,6 +92,10 @@ timeout_seconds = 0.5
         (
             'version = 1\n[[checks]]\nid = "x"\nrun = ["x"]\ntimeout_seconds = inf',
             "positive finite number",
+        ),
+        (
+            'version = 1\n[[checks]]\nid = "x"\nrun = ["x"]\nbatch_size = 0',
+            "positive integer",
         ),
         ("version = 1\nfile = []\nchecks = []", "unknown field"),
         (

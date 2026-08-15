@@ -18,11 +18,13 @@ _CHECK_FIELDS = frozenset(
     {
         "id",
         "run",
+        "script",
         "files",
         "exclude",
         "pass_filenames",
         "always_run",
         "timeout_seconds",
+        "batch_size",
     }
 )
 
@@ -31,11 +33,13 @@ _CHECK_FIELDS = frozenset(
 class Check:
     id: str
     run: tuple[str, ...] | None = None
+    script: str | None = None
     files: tuple[str, ...] | None = None
     exclude: tuple[str, ...] = ()
     pass_filenames: bool = True
     always_run: bool = False
     timeout_seconds: float | None = None
+    batch_size: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +51,21 @@ class Config:
 def valid_check_id(value: str) -> bool:
     """Return whether a value is a valid check identifier."""
     return len(value) <= 64 and _ID_RE.fullmatch(value) is not None
+
+
+def _repository_relative_path(value: Any, source: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ConfigError(f"{source}: expected a non-empty repository-relative path")
+    path = PurePosixPath(value)
+    if (
+        "\0" in value
+        or not path.parts
+        or path.is_absolute()
+        or ".." in path.parts
+        or value.endswith("/")
+    ):
+        raise ConfigError(f"{source}: expected a repository-relative file path")
+    return value
 
 
 def _location(source: str, key: str | None = None) -> str:
@@ -141,6 +160,12 @@ def _parse_check(raw: Any, index: int) -> Check:
                     f"{location}[0]: executable path must be relative to the repository"
                 )
 
+    script: str | None = None
+    if "script" in raw:
+        script = _repository_relative_path(raw["script"], _location(source, "script"))
+    if (run is None) == (script is None):
+        raise ConfigError(f"{source}: exactly one of `run` or `script` is required")
+
     files: tuple[str, ...] | None = None
     if "files" in raw:
         files = _string_array(raw["files"], source=source, field="files", allow_empty=False)
@@ -164,14 +189,23 @@ def _parse_check(raw: Any, index: int) -> Check:
             )
         timeout = float(value)
 
+    batch_size: int | None = None
+    if "batch_size" in raw:
+        value = raw["batch_size"]
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ConfigError(f"{_location(source, 'batch_size')}: expected a positive integer")
+        batch_size = value
+
     return Check(
         id=check_id,
         run=run,
+        script=script,
         files=files,
         exclude=exclude,
         pass_filenames=_boolean(raw, "pass_filenames", True, source),
         always_run=_boolean(raw, "always_run", False, source),
         timeout_seconds=timeout,
+        batch_size=batch_size,
     )
 
 

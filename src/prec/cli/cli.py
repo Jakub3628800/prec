@@ -13,8 +13,10 @@ from prec.cli.list import configure_parser as configure_list_parser
 from prec.cli.list import list_checks
 from prec.cli.run import configure_parser as configure_run_parser
 from prec.cli.run import run
+from prec.cli.validate import configure_parser as configure_validate_parser
+from prec.cli.validate import validate
 from prec.cli.version import configure_parser as configure_version_parser
-from prec.errors.errors import PrecError
+from prec.errors.errors import PrecError, TerminationRequested
 from prec.git.repository import Repository
 
 
@@ -28,6 +30,9 @@ def _parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser("list", help="list configured checks")
     configure_list_parser(list_parser)
+
+    validate_parser = subparsers.add_parser("validate", help="validate checks without running")
+    configure_validate_parser(validate_parser)
 
     check_parser = subparsers.add_parser("check", help="manage custom checks")
     configure_check_parser(check_parser)
@@ -47,6 +52,7 @@ def _normalize_argv(arguments: Sequence[str]) -> list[str]:
     if argv[0] in {
         "run",
         "list",
+        "validate",
         "check",
         "install",
         "uninstall",
@@ -71,6 +77,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return run(repository, args)
         if args.command == "list":
             return list_checks(repository, args)
+        if args.command == "validate":
+            return validate(repository, args)
         if args.command == "check":
             return manage_checks(repository, args)
         if args.command == "install":
@@ -80,6 +88,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(f"unknown command: {args.command}")
     except KeyboardInterrupt:
         return 130
+    except TerminationRequested as error:
+        return 128 + error.signum
     except PrecError as error:
         print(f"prec: error: {error}", file=sys.stderr)
         return 2

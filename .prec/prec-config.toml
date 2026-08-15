@@ -23,4 +23,5 @@ pass_filenames = false
 
 [[checks]]
 id = "end-of-file"
+script = ".prec/checks/end-of-file/end_of_file.py"
 files = ["*.py", "*.toml", "*.md"]

@@ -14,20 +14,20 @@ _LINE_WIDTH = 72
 
 def _display_status(result: CheckResult) -> str:
     if result.state is State.PASSED:
-        return "success"
-    if result.state is State.FAILED and result.returncode == 1:
-        return "error"
+        return "passed"
+    if result.state is State.FAILED:
+        return "failed"
     if result.state is State.SKIPPED:
         return "skipped"
-    return "other"
+    return "error"
 
 
 def _styled_status(status: str) -> str:
     if not sys.stdout.isatty() or "NO_COLOR" in os.environ:
         return status
-    if status == "success":
+    if status == "passed":
         return f"{_GREEN}{status}{_RESET}"
-    if status == "error":
+    if status in {"failed", "error"}:
         return f"{_RED}{status}{_RESET}"
     return status
 
@@ -65,11 +65,12 @@ def print_result(result: CheckResult) -> None:
 
 def print_summary(results: tuple[CheckResult, ...]) -> None:
     """Print display-status totals for a completed run."""
-    success = sum(_display_status(result) == "success" for result in results)
+    passed = sum(_display_status(result) == "passed" for result in results)
+    failed = sum(_display_status(result) == "failed" for result in results)
     error = sum(_display_status(result) == "error" for result in results)
-    other = sum(_display_status(result) == "other" for result in results)
     skipped = sum(_display_status(result) == "skipped" for result in results)
     print(
-        f"Summary: {success} {_styled_status('success')}, "
-        f"{error} {_styled_status('error')}, {other} other, {skipped} skipped"
+        f"Summary: {passed} {_styled_status('passed')}, "
+        f"{failed} {_styled_status('failed')}, "
+        f"{error} {_styled_status('error')}, {skipped} skipped"
     )

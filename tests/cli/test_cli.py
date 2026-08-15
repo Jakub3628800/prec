@@ -1,3 +1,9 @@
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 from conftest import commit_all, config, git, run_prec
@@ -40,7 +46,7 @@ files = ["*.py"]"""
     assert result.returncode == 0
     assert (repo / "captured.txt").read_text() == "new.py|old.py"
     assert "capture" in result.stdout
-    assert "success (exit code: 0)" in result.stdout
+    assert "passed (exit code: 0)" in result.stdout
 
 
 def test_all_includes_unchanged_files(repo: Path) -> None:
@@ -81,7 +87,7 @@ pass_filenames = false"""
 
     result = run_prec(repo, "run", "--staged")
     assert result.returncode == 0, result.stderr
-    assert "success (exit code: 0)" in result.stdout
+    assert "passed (exit code: 0)" in result.stdout
     temporary = repo / ".git" / "prec" / "tmp"
     assert not temporary.exists() or list(temporary.iterdir()) == []
 
@@ -101,7 +107,7 @@ def test_staged_uses_indexed_config(repo: Path) -> None:
     result = run_prec(repo, "run", "--staged")
     assert result.returncode == 0, result.stderr
     assert "which" in result.stdout
-    assert "success (exit code: 0)" in result.stdout
+    assert "passed (exit code: 0)" in result.stdout
 
 
 def test_staged_runs_indexed_interpreter_script(repo: Path) -> None:
@@ -121,7 +127,7 @@ def test_staged_runs_indexed_interpreter_script(repo: Path) -> None:
 
     result = run_prec(repo, "run", "--staged")
     assert result.returncode == 0, result.stderr
-    assert "success (exit code: 0)" in result.stdout
+    assert "passed (exit code: 0)" in result.stdout
 
 
 def test_staged_child_git_uses_disposable_index(repo: Path) -> None:
@@ -223,7 +229,7 @@ def test_failure_error_and_timeout_statuses(repo: Path) -> None:
     failed = run_prec(repo)
     assert failed.returncode == 1
     assert "failure" in failed.stdout
-    assert "error (exit code: 1)" in failed.stdout
+    assert "failed (exit code: 1)" in failed.stdout
     assert "diagnostic" in failed.stderr
 
     (repo / ".prec/prec-config.toml").write_text(
@@ -236,7 +242,7 @@ def test_failure_error_and_timeout_statuses(repo: Path) -> None:
     )
     missing_command = run_prec(repo)
     assert missing_command.returncode == 2
-    assert "other (exit code: N/A)" in missing_command.stdout
+    assert "error (exit code: N/A)" in missing_command.stdout
     assert "command not found" in missing_command.stderr
 
     (repo / ".prec/prec-config.toml").write_text(
@@ -272,3 +278,48 @@ def test_missing_config_symlink_and_outside_repository(repo: Path) -> None:
     not_repo = run_prec(outside)
     assert not_repo.returncode == 2
     assert "not inside a Git worktree" in not_repo.stderr
+
+
+def test_sigterm_stops_active_process_group(repo: Path) -> None:
+    child_pid_file = repo / "child.pid"
+    code = (
+        "import subprocess,time; "
+        "p=subprocess.Popen(['sleep','10']); "
+        f"open({str(child_pid_file)!r},'w').write(str(p.pid)); "
+        "time.sleep(10)"
+    )
+    (repo / ".prec/prec-config.toml").write_text(
+        config(
+            [
+                f'[[checks]]\nid = "slow"\nrun = ["python3", "-c", {json.dumps(code)}]\n'
+                "always_run = true\npass_filenames = false"
+            ]
+        )
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-m", "prec"],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    for _ in range(100):
+        if child_pid_file.exists():
+            break
+        time.sleep(0.02)
+    else:
+        process.kill()
+        raise AssertionError("check did not start")
+
+    os.kill(process.pid, signal.SIGTERM)
+    assert process.wait(timeout=5) == 128 + signal.SIGTERM
+    child_pid = int(child_pid_file.read_text())
+    for _ in range(50):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.02)
+    else:
+        status = Path(f"/proc/{child_pid}/status")
+        assert status.exists() and "State:\tZ" in status.read_text()

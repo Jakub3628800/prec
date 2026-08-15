@@ -40,12 +40,13 @@ def test_add_scaffolds_registers_and_runs_executable_check(
     assert os.access(script, os.X_OK)
     assert config_path.stat().st_mode & 0o777 == 0o640
     assert load_worktree_config(repo).checks[0].run is None
+    assert load_worktree_config(repo).checks[0].script == relative
     assert load_worktree_config(repo).checks[0].files == ("*.txt",)
 
     (repo / "-example.txt").write_text("content\n")
     executed = run_prec(repo, "run", "sample-check")
     assert executed.returncode == 0, executed.stderr
-    assert "success (exit code: 0)" in executed.stdout
+    assert "passed (exit code: 0)" in executed.stdout
 
 
 def test_add_creates_config_and_derives_path_from_id(repo: Path) -> None:
@@ -57,6 +58,7 @@ def test_add_creates_config_and_derives_path_from_id(repo: Path) -> None:
     check = load_worktree_config(repo).checks[0]
     assert check.id == "no_tabs"
     assert check.run is None
+    assert check.script == ".prec/checks/no_tabs/no_tabs.py"
 
 
 def test_add_refuses_invalid_and_existing_checks(repo: Path) -> None:
@@ -71,21 +73,24 @@ def test_add_refuses_invalid_and_existing_checks(repo: Path) -> None:
     assert "already exists" in second.stderr
 
 
-def test_custom_check_reports_missing_and_ambiguous_executables(repo: Path) -> None:
+def test_custom_check_reports_missing_executable(repo: Path) -> None:
     config_path = repo / ".prec/prec-config.toml"
-    config_path.write_text('version = 1\n[[checks]]\nid = "missing"\nalways_run = true\n')
+    config_path.write_text(
+        'version = 1\n[[checks]]\nid = "missing"\nscript = ".prec/checks/missing.py"\n'
+        "always_run = true\n"
+    )
     missing = run_prec(repo, "run")
     assert missing.returncode == 2
-    assert "custom check executable not found" in missing.stderr
+    assert "custom check script not found" in missing.stderr
 
-    added = run_prec(repo, "check", "add", "ambiguous")
-    assert added.returncode == 0, added.stderr
-    bash = repo / ".prec/checks/ambiguous/ambiguous.sh"
+
+def test_add_refuses_opposite_language_orphan(repo: Path) -> None:
+    bash = repo / ".prec/checks/collision/collision.sh"
+    bash.parent.mkdir(parents=True)
     bash.write_text("#!/usr/bin/env bash\nexit 0\n")
-    bash.chmod(0o755)
-    ambiguous = run_prec(repo, "run", "ambiguous")
-    assert ambiguous.returncode == 2
-    assert "custom check has multiple executables" in ambiguous.stderr
+    result = run_prec(repo, "check", "add", "collision")
+    assert result.returncode == 2
+    assert "custom check path already exists" in result.stderr
 
 
 def test_generated_check_executes_from_staged_snapshot(repo: Path) -> None:
@@ -101,4 +106,4 @@ def test_generated_check_executes_from_staged_snapshot(repo: Path) -> None:
     result = run_prec(repo, "run", "--staged", "indexed")
 
     assert result.returncode == 0, result.stderr
-    assert "success (exit code: 0)" in result.stdout
+    assert "passed (exit code: 0)" in result.stdout

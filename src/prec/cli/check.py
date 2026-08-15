@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from prec.config.config import CONFIG_PATH, loads_config, valid_check_id
-from prec.custom import custom_script_path
+from prec.custom import custom_script_path, custom_script_paths
 from prec.errors.errors import ConfigError, UsageError
 from prec.git.patterns import PatternError, validate_pattern
 from prec.git.repository import Repository
@@ -76,7 +76,9 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _config_with_check(content: bytes | None, check_id: str, files: list[str]) -> bytes:
+def _config_with_check(
+    content: bytes | None, check_id: str, script: str, files: list[str]
+) -> bytes:
     if content is None:
         content = b"version = 1\n"
         config_has_checks = False
@@ -100,14 +102,14 @@ def _config_with_check(content: bytes | None, check_id: str, files: list[str]) -
             )
 
     separator = b"" if content.endswith(b"\n\n") else b"\n" if content.endswith(b"\n") else b"\n\n"
-    registration = [f"[[checks]]\nid = {json.dumps(check_id)}\n"]
+    registration = [f"[[checks]]\nid = {json.dumps(check_id)}\nscript = {json.dumps(script)}\n"]
     if files:
         patterns = ", ".join(json.dumps(pattern) for pattern in files)
         registration.append(f"files = [{patterns}]\n")
     return content + separator + "".join(registration).encode()
 
 
-def _replace_file(path: Path, content: bytes, mode: int | None = None) -> None:
+def _prepare_file(path: Path, content: bytes, mode: int) -> Path:
     temporary: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,9 +117,8 @@ def _replace_file(path: Path, content: bytes, mode: int | None = None) -> None:
         temporary = Path(name)
         with os.fdopen(descriptor, "wb") as file:
             file.write(content)
-        if mode is not None:
-            temporary.chmod(mode)
-        temporary.replace(path)
+        temporary.chmod(mode)
+        return temporary
     except OSError as error:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -141,8 +142,13 @@ def add_check(repository: Repository, args: argparse.Namespace) -> int:
     script_path = repository.root / relative_script
     config_path = repository.root / CONFIG_PATH
 
-    if script_path.exists() or script_path.is_symlink():
-        raise UsageError(f"custom check path already exists: {relative_script}")
+    existing = tuple(
+        path
+        for path in custom_script_paths(check_id)
+        if (repository.root / path).exists() or (repository.root / path).is_symlink()
+    )
+    if existing:
+        raise UsageError(f"custom check path already exists: {', '.join(existing)}")
     if config_path.is_symlink():
         raise ConfigError(f"{CONFIG_PATH}: configuration must not be a symbolic link")
     try:
@@ -154,13 +160,21 @@ def add_check(repository: Repository, args: argparse.Namespace) -> int:
     except OSError as error:
         raise ConfigError(f"{CONFIG_PATH}: cannot read configuration: {error}") from error
 
-    updated_config = _config_with_check(config_content, check_id, files)
-    _replace_file(script_path, template.encode(), mode=0o755)
+    updated_config = _config_with_check(config_content, check_id, relative_script, files)
+    script_temporary = _prepare_file(script_path, template.encode(), 0o755)
     try:
-        _replace_file(config_path, updated_config, mode=config_mode)
+        config_temporary = _prepare_file(config_path, updated_config, config_mode)
     except ConfigError:
-        script_path.unlink(missing_ok=True)
+        script_temporary.unlink(missing_ok=True)
         raise
+    try:
+        script_temporary.replace(script_path)
+        config_temporary.replace(config_path)
+    except OSError as error:
+        script_temporary.unlink(missing_ok=True)
+        config_temporary.unlink(missing_ok=True)
+        script_path.unlink(missing_ok=True)
+        raise ConfigError(f"could not register custom check: {error}") from error
 
     print(f"Created {relative_script}")
     print(f"Registered `{check_id}` in {CONFIG_PATH}")

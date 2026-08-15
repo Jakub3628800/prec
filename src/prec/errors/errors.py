@@ -19,3 +19,10 @@ class HookError(PrecError):
 
 class UsageError(PrecError):
     """A CLI selection is invalid."""
+
+
+class TerminationRequested(BaseException):
+    """A termination signal received while a child process was active."""
+
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
