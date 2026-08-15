@@ -5,9 +5,8 @@ from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 
-from prec.config.config import Config, load_worktree_config
-from prec.config.indexed import load_index_config
-from prec.errors.errors import UsageError
+from prec.config import Config, load_index_config, load_worktree_config
+from prec.errors import UsageError
 from prec.git.candidates import Source, candidates
 from prec.git.repository import Repository
 from prec.git.snapshot import index_snapshot

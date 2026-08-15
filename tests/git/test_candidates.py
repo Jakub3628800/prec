@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from conftest import commit_all, git
 
-from prec.errors.errors import RepositoryError
+from prec.errors import RepositoryError
 from prec.git.candidates import Source, candidates
 from prec.git.repository import Repository
 

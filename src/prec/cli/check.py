@@ -8,9 +8,9 @@ import stat
 import tempfile
 from pathlib import Path
 
-from prec.config.config import CONFIG_PATH, loads_config, valid_check_id
+from prec.config import CONFIG_PATH, loads_config, valid_check_id
 from prec.custom import custom_script_path, custom_script_paths
-from prec.errors.errors import ConfigError, UsageError
+from prec.errors import ConfigError, UsageError
 from prec.git.patterns import PatternError, validate_pattern
 from prec.git.repository import Repository
 

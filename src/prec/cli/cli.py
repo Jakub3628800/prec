@@ -16,7 +16,7 @@ from prec.cli.run import run
 from prec.cli.validate import configure_parser as configure_validate_parser
 from prec.cli.validate import validate
 from prec.cli.version import configure_parser as configure_version_parser
-from prec.errors.errors import PrecError, TerminationRequested
+from prec.errors import PrecError, TerminationRequested
 from prec.git.repository import Repository
 
 

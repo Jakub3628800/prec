@@ -1,7 +1,7 @@
 import pytest
 
-from prec.config.config import Check, loads_config
-from prec.errors.errors import ConfigError
+from prec.config import Check, loads_config
+from prec.errors import ConfigError
 
 
 def load(text: str):  # type: ignore[no-untyped-def]

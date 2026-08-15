@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from prec.config.config import Check, Config
+from prec.config import Check, Config
 from prec.git.patterns import filter_paths
 
 

@@ -2,7 +2,7 @@
 
 import argparse
 
-from prec.config.config import load_worktree_config
+from prec.config import load_worktree_config
 from prec.git.candidates import Source, candidates
 from prec.git.repository import Repository
 from prec.runner.plan import plan_checks

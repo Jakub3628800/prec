@@ -3,7 +3,7 @@ import os
 import time
 from pathlib import Path
 
-from prec.config.config import Check, Config
+from prec.config import Check, Config
 from prec.runner.result import State, exit_status
 from prec.runner.runner import run_checks
 

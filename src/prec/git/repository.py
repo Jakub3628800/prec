@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 
-from prec.errors.errors import RepositoryError
+from prec.errors import RepositoryError
 
 
 def _decode_text(value: bytes, description: str) -> str:

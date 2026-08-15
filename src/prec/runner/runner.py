@@ -11,8 +11,8 @@ from contextlib import suppress
 from pathlib import Path
 from types import FrameType
 
-from prec.config.config import Config
-from prec.errors.errors import TerminationRequested
+from prec.config import Config
+from prec.errors import TerminationRequested
 from prec.runner.plan import PlannedCheck, plan_checks
 from prec.runner.result import CheckResult, State
 

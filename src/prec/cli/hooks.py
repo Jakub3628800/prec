@@ -7,7 +7,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from prec.errors.errors import HookError, RepositoryError
+from prec.errors import HookError, RepositoryError
 from prec.git.repository import Repository
 
 _MARKER = b"# prec-managed-hook:v1\n"

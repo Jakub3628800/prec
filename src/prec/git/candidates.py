@@ -3,7 +3,7 @@
 import os
 from enum import Enum
 
-from prec.errors.errors import RepositoryError
+from prec.errors import RepositoryError
 from prec.git.repository import Repository
 
 

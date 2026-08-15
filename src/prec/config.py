@@ -8,8 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from prec.errors.errors import ConfigError
+from prec.errors import ConfigError
+from prec.git.index import index_entries, read_index_blob
 from prec.git.patterns import PatternError, validate_pattern
+from prec.git.repository import Repository
 
 CONFIG_PATH = ".prec/prec-config.toml"
 _ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
@@ -235,6 +237,21 @@ def loads_config(content: bytes, source: str = CONFIG_PATH) -> Config:
             raise ConfigError(f"{_location(source, 'checks')}: duplicate check id `{check.id}`")
         seen.add(check.id)
     return Config(version=version, checks=checks)
+
+
+def load_index_config(repository: Repository) -> Config:
+    """Load and validate the configuration indexed for commit."""
+    entries = index_entries(repository, CONFIG_PATH)
+    if not entries:
+        raise ConfigError(f"{CONFIG_PATH}: configuration is absent from the Git index")
+    if len(entries) != 1 or entries[0].stage != 0:
+        raise ConfigError(f"{CONFIG_PATH}: configuration has an unmerged index entry")
+    mode = entries[0].mode
+    if mode == "120000":
+        raise ConfigError(f"{CONFIG_PATH}: indexed configuration must not be a symbolic link")
+    if not mode.startswith("100"):
+        raise ConfigError(f"{CONFIG_PATH}: indexed configuration is not a regular file")
+    return loads_config(read_index_blob(repository, CONFIG_PATH))
 
 
 def load_worktree_config(root: Path) -> Config:

@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from prec.errors.errors import RepositoryError
+from prec.errors import RepositoryError
 from prec.git.repository import Repository
 
 

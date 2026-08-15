@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from conftest import commit_all, git, run_prec
 
-from prec.config.config import load_worktree_config
+from prec.config import load_worktree_config
 
 
 @pytest.mark.parametrize(

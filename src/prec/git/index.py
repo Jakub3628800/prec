@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from prec.errors.errors import RepositoryError
+from prec.errors import RepositoryError
 from prec.git.repository import Repository
 
 

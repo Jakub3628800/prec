@@ -2,7 +2,7 @@
 
 import argparse
 
-from prec.config.config import load_worktree_config
+from prec.config import load_worktree_config
 from prec.git.repository import Repository
 
 
