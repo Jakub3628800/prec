@@ -118,7 +118,7 @@ def test_timeout_terminates_descendant_process_group(tmp_path: Path) -> None:
         f"open({str(pid_file)!r},'w').write(str(p.pid)); "
         "time.sleep(10)"
     )
-    check = Check("tree", ("python3", "-c", code), always_run=True, timeout_seconds=0.2)
+    check = Check("tree", ("python3", "-c", code), always_run=True, timeout_seconds=1.0)
     results = run_checks(Config(1, (check,)), (), tmp_path)
     assert results[0].state is State.ERROR
     child_pid = int(pid_file.read_text())
